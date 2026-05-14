@@ -985,7 +985,8 @@ function SchedulePage({ tasks, routine, token }) {
     setLoading(true); setError(null);
     try {
       const res=await fetch(BASE + "/api/schedule/generate",{
-        method:"POST", headers:{"Content-Type":"application/json"},
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+(token||"")},
         body:JSON.stringify({ tasks:active, routine }),
       });
       if(!res.ok) throw new Error(await res.text());
