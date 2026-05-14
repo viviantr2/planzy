@@ -50,7 +50,8 @@ const C = {
 ───────────────────────────────────────── */
 const WEEK_DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const DAY_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-const API = "https://planzy.onrender.com/api/tasks";
+const BASE = process.env.REACT_APP_API_URL || "http://localhost:5050";
+const API = BASE + "/api/tasks";
 
 const DEFAULT_ROUTINE = {
   days: WEEK_DAYS.map((day,i) => ({ day, wakeUp: i<5?"07:00":"08:00", sleep: i<5?"23:00":"23:30" })),
@@ -69,6 +70,7 @@ const EVENT_TYPES = {
 const NAV = [
   { id:"dashboard", label:"Dashboard",  icon:"Home"         },
   { id:"tasks",     label:"My Tasks",   icon:"ListChecks"   },
+  { id:"calendar",  label:"Calendar",   icon:"Calendar"     },
   { id:"schedule",  label:"AI Schedule",icon:"BrainCircuit" },
   { id:"routine",   label:"My Routine", icon:"Settings"     },
 ];
@@ -239,7 +241,7 @@ function TaskCard({ task, onToggle, onDelete, onEdit }) {
           </div>
           <div>
             <label style={lblStyle}>Deadline</label>
-            <input type="date" style={inpStyle()} value={form.deadline} onChange={e=>setForm(f=>({...f,deadline:e.target.value}))}/>
+            <input type="date" style={inpStyle({cursor:"pointer"})} value={form.deadline} onChange={e=>setForm(f=>({...f,deadline:e.target.value}))} onClick={e=>{ try{e.target.showPicker();}catch(err){} }}/>
           </div>
           <div>
             <label style={lblStyle}>Study hours</label>
@@ -341,7 +343,7 @@ function AddTaskForm({ onAdd, onClose }) {
     if (!desc.trim()) return;
     setEstimating(true); setEstimation(null);
     try {
-      const res = await fetch("https://planzy.onrender.com/api/estimate-hours", {
+      const res = await fetch(BASE + "/api/estimate-hours", {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ description: desc }),
       });
@@ -368,7 +370,7 @@ function AddTaskForm({ onAdd, onClose }) {
         </div>
         <div>
           <label style={lblStyle}>Deadline</label>
-          <input type="date" style={inpStyle()} value={form.deadline} onChange={e=>set("deadline",e.target.value)}/>
+          <input type="date" style={inpStyle({cursor:"pointer"})} value={form.deadline} onChange={e=>set("deadline",e.target.value)} onClick={e=>{ try{e.target.showPicker();}catch(err){} }}/>
         </div>
         <div>
           <label style={lblStyle}>Study hours</label>
@@ -473,7 +475,7 @@ function EmptyState({ text }) {
 /* ─────────────────────────────────────────
    PAGE: DASHBOARD
 ───────────────────────────────────────── */
-function DashboardPage({ tasks, onToggle, onDelete, onAdd, onEdit, showAdd, setShowAdd }) {
+function DashboardPage({ tasks, onToggle, onDelete, onAdd, onEdit, showAdd, setShowAdd, user }) {
   const done=tasks.filter(t=>t.completed).length;
   const active=tasks.filter(t=>!t.completed).length;
   const urgent=tasks.filter(t=>!t.completed&&["Critical","Overdue"].includes(getUrgency(t).tag)).length;
@@ -484,7 +486,7 @@ function DashboardPage({ tasks, onToggle, onDelete, onAdd, onEdit, showAdd, setS
   return (
     <div style={{ padding:"36px 40px", maxWidth:900 }}>
       <div style={{ marginBottom:32 }}>
-        <h1 style={{ fontSize:27, fontWeight:700, color:C.g900, margin:0, letterSpacing:"-0.5px" }}>{greeting}, Vy 👋</h1>
+        <h1 style={{ fontSize:27, fontWeight:700, color:C.g900, margin:0, letterSpacing:"-0.5px" }}>{greeting}, {user ? user.name.split(" ")[0] : "there"} 👋</h1>
         <p style={{ color:C.g400, fontSize:14, marginTop:5 }}>{dateStr}</p>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:36 }}>
@@ -592,11 +594,13 @@ function RoutinePage({ routine, onChange }) {
   const removeEvent=(id)=>onChange({...routine,events:routine.events.filter(e=>e.id!==id)});
 
   const TimeInput=({value,onChange:onCh})=>(
-    <input type="time" value={value} onChange={e=>onCh(e.target.value)} style={{
-      padding:"7px 10px", borderRadius:8, fontSize:13, width:"100%",
-      border:`1.5px solid ${C.g200}`, outline:"none", color:C.g800,
-      fontFamily:"inherit", background:C.white, boxSizing:"border-box",
-    }}/>
+    <input type="time" value={value} onChange={e=>onCh(e.target.value)}
+      onClick={e=>{ try { e.target.showPicker(); } catch(err){} }}
+      style={{
+        padding:"7px 10px", borderRadius:8, fontSize:13, width:"100%",
+        border:`1.5px solid ${C.g200}`, outline:"none", color:C.g800,
+        fontFamily:"inherit", background:C.white, boxSizing:"border-box", cursor:"pointer",
+      }}/>
   );
 
   return (
@@ -755,16 +759,9 @@ function SchedulePage({ tasks, routine, token }) {
   const generate=async()=>{
     setLoading(true); setError(null);
     try {
-      const res = await fetch("https://planzy.onrender.com/api/schedule/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          tasks: active,
-          routine,
-        }),
+      const res=await fetch(BASE + "/api/schedule/generate",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ tasks:active, routine }),
       });
       if(!res.ok) throw new Error(await res.text());
       const data=await res.json();
@@ -890,6 +887,141 @@ function SchedulePage({ tasks, routine, token }) {
 }
 
 /* ─────────────────────────────────────────
+   PAGE: CALENDAR
+───────────────────────────────────────── */
+const CAL_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const MONTHS   = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function CalendarPage({ tasks, onToggle, onDelete, onEdit }) {
+  const now = new Date();
+  const [cur, setCur]         = useState(new Date(now.getFullYear(), now.getMonth(), 1));
+  const [selected, setSelected] = useState(null);
+
+  const year  = cur.getFullYear();
+  const month = cur.getMonth();
+
+  const prev = () => setCur(new Date(year, month-1, 1));
+  const next = () => setCur(new Date(year, month+1, 1));
+
+  // Calendar grid: pad start with nulls
+  let startDow = new Date(year, month, 1).getDay();
+  startDow = startDow === 0 ? 6 : startDow - 1;
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const cells = [...Array(startDow).fill(null), ...Array.from({length:daysInMonth},(_,i)=>i+1)];
+
+  const pad = n => String(n).padStart(2,"0");
+  const dateStr = day => `${year}-${pad(month+1)}-${pad(day)}`;
+  const getTasksForDay = day => tasks.filter(t => t.deadline === dateStr(day));
+
+  const isToday = day => {
+    const t = new Date();
+    return day===t.getDate() && month===t.getMonth() && year===t.getFullYear();
+  };
+
+  const selectedTasks = selected ? getTasksForDay(selected) : [];
+
+  return (
+    <div style={{ padding:"36px 40px", maxWidth:960 }}>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
+        <div>
+          <h1 style={{ fontSize:24, fontWeight:700, color:C.g900, margin:0 }}>Calendar</h1>
+          <p style={{ color:C.g400, fontSize:14, marginTop:4 }}>Tasks by deadline</p>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <button onClick={prev} style={{
+            width:34, height:34, borderRadius:8, border:`1px solid ${C.g200}`,
+            background:C.white, cursor:"pointer", fontSize:16, display:"flex",
+            alignItems:"center", justifyContent:"center",
+          }}>‹</button>
+          <span style={{ fontSize:16, fontWeight:700, color:C.g900, minWidth:160, textAlign:"center" }}>
+            {MONTHS[month]} {year}
+          </span>
+          <button onClick={next} style={{
+            width:34, height:34, borderRadius:8, border:`1px solid ${C.g200}`,
+            background:C.white, cursor:"pointer", fontSize:16, display:"flex",
+            alignItems:"center", justifyContent:"center",
+          }}>›</button>
+        </div>
+      </div>
+
+      {/* Grid */}
+      <div style={{ background:C.white, borderRadius:16, border:`1px solid ${C.g200}`, overflow:"hidden" }}>
+        {/* Day headers */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", background:C.g50, borderBottom:`1px solid ${C.g200}` }}>
+          {CAL_DAYS.map(d=>(
+            <div key={d} style={{ padding:"10px 0", textAlign:"center", fontSize:12, fontWeight:700, color:C.g500, letterSpacing:"0.5px" }}>
+              {d.toUpperCase()}
+            </div>
+          ))}
+        </div>
+
+        {/* Day cells */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)" }}>
+          {cells.map((day,i)=>{
+            const dayTasks = day ? getTasksForDay(day) : [];
+            const isSelected = day===selected;
+            const todayCell = day && isToday(day);
+            return (
+              <div key={i} onClick={()=>day&&setSelected(day===selected?null:day)}
+                style={{
+                  minHeight:88, padding:"8px 8px 6px", cursor:day?"pointer":"default",
+                  borderRight:`1px solid ${C.g100}`, borderBottom:`1px solid ${C.g100}`,
+                  background: isSelected?C.purpleSoft : !day?C.g50 : C.white,
+                  transition:"background 0.1s",
+                }}>
+                {day&&(
+                  <>
+                    <div style={{
+                      width:26, height:26, borderRadius:"50%",
+                      background:todayCell?C.purple:"transparent",
+                      color:todayCell?C.white: isSelected?C.purple:C.g700,
+                      fontWeight:todayCell||isSelected?700:400,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:13, marginBottom:5,
+                    }}>{day}</div>
+                    {dayTasks.slice(0,3).map((t,j)=>{
+                      const u = getUrgency(t);
+                      return (
+                        <div key={j} style={{
+                          fontSize:10, fontWeight:600, color:t.completed?C.g400:u.color,
+                          background:t.completed?C.g100:u.bg,
+                          borderRadius:4, padding:"2px 6px", marginBottom:2,
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                          textDecoration:t.completed?"line-through":"none",
+                        }}>{t.name}</div>
+                      );
+                    })}
+                    {dayTasks.length>3&&(
+                      <div style={{ fontSize:10, color:C.g400, marginTop:1 }}>+{dayTasks.length-3} more</div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Selected day panel */}
+      {selected&&(
+        <div style={{ marginTop:20 }}>
+          <h2 style={{ fontSize:17, fontWeight:700, color:C.g900, margin:"0 0 12px" }}>
+            {selected} {MONTHS[month]} {year}
+            {selectedTasks.length===0&&<span style={{ fontSize:14, color:C.g400, fontWeight:400 }}> — no tasks due</span>}
+          </h2>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {selectedTasks.map(t=>(
+              <TaskCard key={t._id} task={t} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit}/>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
    AUTH PAGE (Login / Register)
 ───────────────────────────────────────── */
 function AuthPage({ onLogin }) {
@@ -905,7 +1037,7 @@ function AuthPage({ onLogin }) {
     setLoading(true); setError(null);
     try {
       const url = mode==="login" ? "/api/auth/login" : "/api/auth/register";
-      const res = await fetch("https://planzy.onrender.com" + url, {
+      const res = await fetch(BASE + url, {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify(form),
       });
@@ -1113,8 +1245,9 @@ export default function App() {
       background:C.bg, overflow:"hidden" }}>
       <Sidebar active={nav} onChange={id=>{ setNav(id); setShowAdd(false); }} user={user} onLogout={logout}/>
       <main style={{ flex:1, overflowY:"auto" }}>
-        {nav==="dashboard"&&<DashboardPage {...shared}/>}
+        {nav==="dashboard"&&<DashboardPage {...shared} user={user}/>}
         {nav==="tasks"    &&<TasksPage     {...shared}/>}
+        {nav==="calendar" &&<CalendarPage  tasks={tasks} onToggle={toggleComplete} onDelete={deleteTask} onEdit={editTask}/>}
         {nav==="schedule" &&<SchedulePage  tasks={tasks} routine={routine} token={token}/>}
         {nav==="routine"  &&<RoutinePage   routine={routine} onChange={setRoutine}/>}
       </main>
