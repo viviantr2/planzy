@@ -473,40 +473,265 @@ function EmptyState({ text }) {
 }
 
 /* ─────────────────────────────────────────
-   PAGE: DASHBOARD
+   PAGE: DASHBOARD (redesigned)
 ───────────────────────────────────────── */
 function DashboardPage({ tasks, onToggle, onDelete, onAdd, onEdit, showAdd, setShowAdd, user }) {
-  const done=tasks.filter(t=>t.completed).length;
-  const active=tasks.filter(t=>!t.completed).length;
-  const urgent=tasks.filter(t=>!t.completed&&["Critical","Overdue"].includes(getUrgency(t).tag)).length;
-  const hour=new Date().getHours();
-  const greeting=hour<12?"Good morning":hour<17?"Good afternoon":"Good evening";
-  const dateStr=new Date().toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"});
-  const upcoming=[...tasks].filter(t=>!t.completed&&t.deadline).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline)).slice(0,5);
+  const now  = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const dateStr  = now.toLocaleDateString("en-AU", { weekday:"long", day:"numeric", month:"long" });
+  const todayName = now.toLocaleDateString("en-US", { weekday:"long" }); // e.g. "Monday"
+
+  // Stat counts
+  const active    = tasks.filter(t => !t.completed);
+  const done      = tasks.filter(t =>  t.completed);
+  const urgent    = active.filter(t => ["Critical","Overdue"].includes(getUrgency(t).tag));
+
+  // Today's Focus — top 3 most urgent active tasks
+  const focusTasks = [...active]
+    .filter(t => t.deadline)
+    .sort((a,b) => new Date(a.deadline) - new Date(b.deadline))
+    .slice(0, 3);
+
+  // Countdown: max days used for bar width
+  const maxDays = active.length
+    ? Math.max(...active.filter(t=>t.deadline).map(t => Math.max(getUrgency(t).days, 0)), 1)
+    : 60;
+
+  // Today's AI schedule from localStorage
+  const savedSchedule = (() => {
+    try { return JSON.parse(localStorage.getItem("planzy_schedule")); } catch { return null; }
+  })();
+  const todaySchedule = savedSchedule
+    ? savedSchedule.find(d => d.day === todayName) || null
+    : null;
+  const upcomingBlocks = todaySchedule
+    ? todaySchedule.blocks.filter(b => {
+        const [h,m] = b.startTime.split(":").map(Number);
+        return h * 60 + m >= hour * 60 + now.getMinutes();
+      }).slice(0, 5)
+    : [];
+
+  // Total study hours needed
+  const totalHours = active.reduce((s,t) => s + (+t.studyTime||0), 0);
+
+  const col = { display:"flex", flexDirection:"column", gap:16 };
+
+  const sectionCard = (children, extra={}) => ({
+    background:C.white, borderRadius:14, border:`1px solid ${C.g200}`,
+    padding:"20px 22px", ...extra,
+  });
+
   return (
-    <div style={{ padding:"36px 40px", maxWidth:900 }}>
-      <div style={{ marginBottom:32 }}>
-        <h1 style={{ fontSize:27, fontWeight:700, color:C.g900, margin:0, letterSpacing:"-0.5px" }}>{greeting}, {user ? user.name.split(" ")[0] : "there"} 👋</h1>
+    <div style={{ padding:"36px 40px", maxWidth:960 }}>
+
+      {/* ── Header ── */}
+      <div style={{ marginBottom:28 }}>
+        <h1 style={{ fontSize:28, fontWeight:700, color:C.g900, margin:0, letterSpacing:"-0.5px" }}>
+          {greeting}, {user ? user.name.split(" ")[0] : "there"} 👋
+        </h1>
         <p style={{ color:C.g400, fontSize:14, marginTop:5 }}>{dateStr}</p>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:36 }}>
-        <StatCard label="Total Tasks"  value={tasks.length} icon="ListChecks"    color={C.purple} bg={C.purpleSoft}/>
-        <StatCard label="Urgent"       value={urgent}       icon="AlertTriangle"  color={C.red}    bg={C.redSoft}/>
-        <StatCard label="In Progress"  value={active}       icon="Clock"          color={C.amber}  bg={C.amberSoft}/>
-        <StatCard label="Completed"    value={done}         icon="Check"          color={C.green}  bg={C.greenSoft}/>
+
+      {/* ── Mini stats row ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:24 }}>
+        {[
+          { label:"Total Tasks",  value:tasks.length, icon:"ListChecks",    color:C.purple, bg:C.purpleSoft },
+          { label:"Urgent",       value:urgent.length, icon:"AlertTriangle", color:C.red,    bg:C.redSoft   },
+          { label:"In Progress",  value:active.length, icon:"Clock",         color:C.amber,  bg:C.amberSoft },
+          { label:"Completed",    value:done.length,   icon:"Check",         color:C.green,  bg:C.greenSoft },
+        ].map(s=>(
+          <div key={s.label} style={{ background:C.white, borderRadius:12, border:`1px solid ${C.g200}`, padding:"14px 18px", display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ width:36, height:36, borderRadius:9, background:s.bg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              <Ico name={s.icon} size={17} color={s.color} strokeWidth={2}/>
+            </div>
+            <div>
+              <p style={{ fontSize:22, fontWeight:700, color:C.g900, margin:0, lineHeight:1 }}>{s.value}</p>
+              <p style={{ fontSize:11, color:C.g400, margin:"3px 0 0" }}>{s.label}</p>
+            </div>
+          </div>
+        ))}
       </div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-        <h2 style={{ fontSize:17, fontWeight:700, color:C.g900, margin:0 }}>Upcoming Tasks</h2>
-        <button onClick={()=>setShowAdd(v=>!v)} style={{
-          display:"flex", alignItems:"center", gap:6, padding:"8px 16px",
-          borderRadius:9, border:"none", background:C.purple, color:"white",
-          fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
-        }}><Ico name="Plus" size={15} color="white"/> Add Task</button>
-      </div>
-      {showAdd&&<AddTaskForm onAdd={onAdd} onClose={()=>setShowAdd(false)}/>}
-      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-        {upcoming.length===0?<EmptyState text="No upcoming tasks — add your first one!"/>
-          :upcoming.map(t=><TaskCard key={t._id} task={t} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit}/>)}
+
+      {/* ── 2-column layout ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, alignItems:"start" }}>
+
+        {/* LEFT COLUMN */}
+        <div style={col}>
+
+          {/* Today's Focus */}
+          <div style={sectionCard()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <h2 style={{ fontSize:14, fontWeight:700, color:C.g900, margin:0, textTransform:"uppercase", letterSpacing:"0.5px" }}>
+                Today's Focus
+              </h2>
+              <button onClick={()=>setShowAdd(v=>!v)} style={{
+                display:"flex", alignItems:"center", gap:5, padding:"6px 12px",
+                borderRadius:8, border:"none", background:C.purple, color:"white",
+                fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
+              }}>
+                <Ico name="Plus" size={13} color="white"/> Add Task
+              </button>
+            </div>
+            {showAdd && <AddTaskForm onAdd={onAdd} onClose={()=>setShowAdd(false)}/>}
+            {focusTasks.length === 0 ? (
+              <p style={{ fontSize:13, color:C.g400, textAlign:"center", padding:"20px 0" }}>No active tasks — add one above!</p>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {focusTasks.map(t => {
+                  const u = getUrgency(t);
+                  const daily = getDailyHours(t);
+                  return (
+                    <div key={t._id} style={{
+                      display:"flex", alignItems:"center", gap:12, padding:"11px 14px",
+                      borderRadius:10, background:u.bg, border:`1px solid ${u.color}22`,
+                      borderLeft:`3px solid ${u.color}`,
+                    }}>
+                      <button onClick={()=>onToggle(t)} style={{
+                        width:20, height:20, borderRadius:5, flexShrink:0,
+                        border:`2px solid ${u.color}`, background:"transparent",
+                        cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+                      }}>
+                        {t.completed && <Ico name="Check" size={11} color={u.color} strokeWidth={3}/>}
+                      </button>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ fontSize:13, fontWeight:600, color:C.g800, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.name}</p>
+                        <p style={{ fontSize:11, color:u.color, margin:"2px 0 0" }}>
+                          {u.days < 0 ? `${Math.abs(u.days)}d overdue` : u.days === 0 ? "Due today!" : `${u.days} days left`}
+                          {daily && ` · ${daily}h/day`}
+                        </p>
+                      </div>
+                      <span style={{ fontSize:11, fontWeight:600, color:u.color, background:C.white, padding:"2px 8px", borderRadius:20, flexShrink:0 }}>
+                        {u.tag}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Deadline Countdown */}
+          {active.filter(t=>t.deadline).length > 0 && (
+            <div style={sectionCard()}>
+              <h2 style={{ fontSize:14, fontWeight:700, color:C.g900, margin:"0 0 16px", textTransform:"uppercase", letterSpacing:"0.5px" }}>
+                Deadline Countdown
+              </h2>
+              <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                {[...active].filter(t=>t.deadline)
+                  .sort((a,b) => new Date(a.deadline)-new Date(b.deadline))
+                  .slice(0, 5)
+                  .map(t => {
+                    const u = getUrgency(t);
+                    const pct = Math.max(0, Math.min(100, 100 - (u.days / maxDays * 100)));
+                    return (
+                      <div key={t._id}>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+                          <span style={{ fontSize:13, fontWeight:500, color:C.g700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"70%" }}>{t.name}</span>
+                          <span style={{ fontSize:12, fontWeight:600, color:u.color, flexShrink:0 }}>
+                            {u.days < 0 ? "Overdue" : u.days === 0 ? "Today" : `${u.days}d`}
+                          </span>
+                        </div>
+                        <div style={{ height:7, background:C.g100, borderRadius:99, overflow:"hidden" }}>
+                          <div style={{
+                            height:"100%", borderRadius:99, width:pct+"%",
+                            background: u.color,
+                            transition:"width 0.6s ease",
+                          }}/>
+                        </div>
+                        <p style={{ fontSize:11, color:C.g400, margin:"3px 0 0" }}>
+                          {t.deadline ? fmtDate(t.deadline) : ""}{t.studyTime ? ` · ${t.studyTime}h needed` : ""}
+                        </p>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT COLUMN */}
+        <div style={col}>
+
+          {/* Today's Schedule */}
+          <div style={sectionCard()}>
+            <h2 style={{ fontSize:14, fontWeight:700, color:C.g900, margin:"0 0 14px", textTransform:"uppercase", letterSpacing:"0.5px" }}>
+              Today — {todayName}
+            </h2>
+            {!todaySchedule ? (
+              <div style={{ textAlign:"center", padding:"20px 0" }}>
+                <Ico name="BrainCircuit" size={28} color={C.g200}/>
+                <p style={{ fontSize:13, color:C.g400, marginTop:8 }}>No schedule yet</p>
+                <p style={{ fontSize:12, color:C.g300, marginTop:4 }}>Go to AI Schedule → Generate</p>
+              </div>
+            ) : upcomingBlocks.length === 0 ? (
+              <p style={{ fontSize:13, color:C.g400, textAlign:"center", padding:"16px 0" }}>All done for today! 🎉</p>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {upcomingBlocks.map((block,i) => {
+                  const s = BLOCK_STYLES[block.type] || BLOCK_STYLES.personal;
+                  return (
+                    <div key={i} style={{
+                      display:"flex", gap:12, alignItems:"flex-start",
+                      padding:"9px 12px", borderRadius:9,
+                      background:s.bg, border:`1px solid ${s.border}`,
+                    }}>
+                      <div style={{ flexShrink:0, textAlign:"right", minWidth:40 }}>
+                        <p style={{ fontSize:12, fontWeight:600, color:s.color, margin:0 }}>{block.startTime}</p>
+                      </div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ fontSize:13, fontWeight:600, color:s.color, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{block.task}</p>
+                        {block.note && <p style={{ fontSize:11, color:s.color, opacity:0.7, margin:"2px 0 0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{block.note}</p>}
+                      </div>
+                      <span style={{ fontSize:11, color:s.color, flexShrink:0, opacity:0.8 }}>{block.duration}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Study Overview */}
+          <div style={sectionCard()}>
+            <h2 style={{ fontSize:14, fontWeight:700, color:C.g900, margin:"0 0 16px", textTransform:"uppercase", letterSpacing:"0.5px" }}>
+              Study Overview
+            </h2>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {[
+                { label:"Total hours needed",  value: totalHours + "h",          color:C.purple },
+                { label:"Active tasks",         value: active.length,             color:C.amber  },
+                { label:"Completed",            value: done.length + " tasks",    color:C.green  },
+                { label:"Completion rate",
+                  value: tasks.length ? Math.round(done.length/tasks.length*100)+"%" : "—",
+                  color:C.blue },
+              ].map(s=>(
+                <div key={s.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:10, borderBottom:`1px solid ${C.g100}` }}>
+                  <span style={{ fontSize:13, color:C.g500 }}>{s.label}</span>
+                  <span style={{ fontSize:15, fontWeight:700, color:s.color }}>{s.value}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Completion bar */}
+            {tasks.length > 0 && (
+              <div style={{ marginTop:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <span style={{ fontSize:12, color:C.g400 }}>Overall progress</span>
+                  <span style={{ fontSize:12, fontWeight:600, color:C.green }}>{Math.round(done.length/tasks.length*100)}%</span>
+                </div>
+                <div style={{ height:8, background:C.g100, borderRadius:99, overflow:"hidden" }}>
+                  <div style={{
+                    height:"100%", borderRadius:99,
+                    width: Math.round(done.length/tasks.length*100)+"%",
+                    background:`linear-gradient(90deg, ${C.purple}, ${C.blue})`,
+                    transition:"width 0.6s ease",
+                  }}/>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
     </div>
   );
